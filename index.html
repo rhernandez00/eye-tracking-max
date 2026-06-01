@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eye-Tracking Calibration</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- ===== Setup / folder access ===== -->
+      <header id="topbar">
+        <div class="brand">Eye-Tracking Calibration</div>
+        <div class="setup">
+          <button id="pick-stimuli" class="btn">📁 stimuli_by_frames…</button>
+          <button id="pick-shared" class="btn">📁 shared_data…</button>
+          <select id="session-select" class="select" disabled>
+            <option value="">— select session —</option>
+          </select>
+          <button id="load-session" class="btn" disabled>Load</button>
+          <span id="setup-status" class="muted"></span>
+        </div>
+      </header>
+
+      <main id="workspace" class="hidden">
+        <!-- ===== Left: frame + controls ===== -->
+        <section id="stage">
+          <div class="stage-head">
+            <label>Stim
+              <select id="stim-select" class="select"></select>
+            </label>
+            <label>onset (s)
+              <input id="onset-input" class="num" type="number" step="0.001" value="0" />
+            </label>
+            <span id="stim-meta" class="muted"></span>
+          </div>
+
+          <div id="canvas-wrap">
+            <canvas id="frame-canvas" width="720" height="720"></canvas>
+          </div>
+
+          <div class="transport">
+            <button id="first" class="btn" title="First frame (Home)">⏮</button>
+            <button id="prev10" class="btn" title="-10 (Shift+←)">⏪</button>
+            <button id="prev" class="btn" title="Prev frame (←)">◀</button>
+            <span id="frame-info" class="frame-info">0 / 0</span>
+            <button id="next" class="btn" title="Next frame (→)">▶</button>
+            <button id="next10" class="btn" title="+10 (Shift+→)">⏩</button>
+            <button id="last" class="btn" title="Last frame (End)">⏭</button>
+            <button id="play" class="btn" title="Play/Pause (Space)">▶ play</button>
+            <span id="frame-time" class="muted"></span>
+          </div>
+
+          <div class="rowcontrols">
+            <label>fps <input id="fps-input" class="num" type="number" min="1" step="1" value="30" /></label>
+            <label>delay (ms)
+              <button id="delay-dec" class="btn sm" title="Decrease delay (,)">−</button>
+              <input id="delay-input" class="num" type="number" step="10" value="0" />
+              <button id="delay-inc" class="btn sm" title="Increase delay (.)">+</button>
+            </label>
+            <label class="muted small">delay step
+              <input id="delay-step" class="num" type="number" step="1" value="10" />
+            </label>
+          </div>
+
+          <details class="preview-xf">
+            <summary>Preview transform (raw → image, visual only)</summary>
+            <div class="rowcontrols">
+              <label>scale x <input id="pt-sx" class="num" type="number" step="0.01" value="1" /></label>
+              <label>scale y <input id="pt-sy" class="num" type="number" step="0.01" value="1" /></label>
+              <label>offset x <input id="pt-ox" class="num" type="number" step="1" value="0" /></label>
+              <label>offset y <input id="pt-oy" class="num" type="number" step="1" value="0" /></label>
+              <label class="chk"><input id="pt-flipy" type="checkbox" /> flip Y</label>
+            </div>
+          </details>
+        </section>
+
+        <!-- ===== Right: markers ===== -->
+        <aside id="sidebar">
+          <div class="side-head">
+            <h2>Markers</h2>
+            <span id="unsaved" class="badge">saved</span>
+          </div>
+
+          <div class="marker-actions">
+            <button id="btn-add-normal" class="btn" title="Add normal marker at raw pos (A)">+ normal</button>
+            <button id="btn-add-anchor" class="btn primary" title="Add anchor at raw pos (Shift+A)">+ anchor</button>
+            <button id="btn-toggle" class="btn" title="Toggle anchor flag (T)">⇄ flag</button>
+            <button id="btn-del" class="btn danger" title="Delete current marker (Del)">🗑</button>
+          </div>
+
+          <div class="marker-current" id="marker-current"></div>
+
+          <div class="table-wrap">
+            <table id="marker-table">
+              <thead>
+                <tr>
+                  <th>stim</th><th>frm</th><th>type</th>
+                  <th>true x</th><th>true y</th>
+                  <th>raw x</th><th>raw y</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="side-foot">
+            <button id="btn-save" class="btn primary" title="Save CSV (Ctrl+S)">💾 Save CSV</button>
+            <button id="btn-export-dl" class="btn" title="Download a copy">⬇ download</button>
+          </div>
+        </aside>
+      </main>
+
+      <div id="toast" class="toast hidden"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "eye-tracking-calibration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Manual eye-tracking calibration anchor tool (Cloudflare Pages + File System Access API)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler pages deploy ./dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}

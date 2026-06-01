@@ -1,0 +1,116 @@
+:root {
+  --bg: #15171c;
+  --panel: #1e2127;
+  --panel-2: #262a32;
+  --line: #333944;
+  --text: #e7ebf0;
+  --muted: #8a93a0;
+  --accent: #4c9aff;
+  --accent-2: #2f6fd0;
+  --danger: #e0556b;
+  --anchor: #ffd34d;
+  --normal: #4cd0a0;
+  --raw: #ff5d7a;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, "Segoe UI", Roboto, sans-serif;
+}
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+
+/* ---- top bar ---- */
+#topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.brand { font-weight: 600; }
+.setup { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ---- buttons / inputs ---- */
+.btn {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.sm { padding: 2px 8px; }
+.btn.primary { background: var(--accent-2); border-color: var(--accent); }
+.btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.select, .num {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+}
+.num { width: 72px; }
+label { display: inline-flex; align-items: center; gap: 6px; }
+.chk { gap: 4px; }
+
+/* ---- workspace ---- */
+#workspace { display: flex; flex: 1; min-height: 0; }
+
+#stage {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 12px; gap: 10px; min-width: 0;
+}
+.stage-head { display: flex; align-items: center; gap: 12px; }
+
+#canvas-wrap {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  background: #0c0d10; border: 1px solid var(--line); border-radius: 8px;
+  position: relative;
+}
+#frame-canvas {
+  max-width: 100%; max-height: 100%;
+  image-rendering: auto; cursor: crosshair;
+  background: #000;
+}
+
+.transport { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.frame-info { min-width: 86px; text-align: center; font-variant-numeric: tabular-nums; }
+.rowcontrols { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.preview-xf summary { cursor: pointer; color: var(--muted); }
+.preview-xf { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+
+/* ---- sidebar ---- */
+#sidebar {
+  width: 380px; flex-shrink: 0;
+  border-left: 1px solid var(--line); background: var(--panel);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.side-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; }
+.side-head h2 { font-size: 14px; margin: 0; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #2b3a2b; color: var(--normal); }
+.badge.dirty { background: #3a2b2b; color: var(--danger); }
+
+.marker-actions { display: flex; gap: 6px; padding: 0 12px 8px; flex-wrap: wrap; }
+.marker-current { padding: 0 12px 8px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 18px; }
+
+.table-wrap { flex: 1; overflow: auto; border-top: 1px solid var(--line); }
+#marker-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#marker-table th, #marker-table td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+#marker-table th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted); font-weight: 500; }
+#marker-table td:first-child, #marker-table th:first-child { text-align: left; }
+#marker-table tbody tr { cursor: pointer; }
+#marker-table tbody tr:hover { background: var(--panel-2); }
+#marker-table tbody tr.sel { background: #2a3340; }
+.tag { padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+.tag.anchor { background: #4a3f12; color: var(--anchor); }
+.tag.normal { background: #173a30; color: var(--normal); }
+
+.side-foot { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+
+/* ---- toast ---- */
+.toast {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
+  padding: 8px 16px; border-radius: 8px; z-index: 50;
+}
