@@ -100,10 +100,13 @@ export async function countFrames(stimuliDir: DirHandle, stimId: string): Promis
   return n;
 }
 
-/** Load one frame as a bitmap. */
-export async function loadFrame(stimuliDir: DirHandle, stimId: string, frameIndex: number): Promise<ImageBitmap> {
-  const folder = await stimuliDir.getDirectoryHandle(stimId);
-  const name = `frame_${String(frameIndex).padStart(4, "0")}.jpg`;
-  const fh = await folder.getFileHandle(name);
+/** Load an image (any file in a sub-folder of stimuli) as a bitmap. */
+export async function loadImageFile(
+  stimuliDir: DirHandle,
+  folderName: string,
+  fileName: string
+): Promise<ImageBitmap> {
+  const folder = await stimuliDir.getDirectoryHandle(folderName);
+  const fh = await folder.getFileHandle(fileName);
   return createImageBitmap(await fh.getFile());
 }

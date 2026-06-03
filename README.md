@@ -23,12 +23,15 @@ Folders are remembered between sessions (one-click re-grant prompt).
 
 ## Workflow
 
-- Pick a **stim** and set its **onset** (auto-filled from `_full_log.csv` when that
-  file exists; otherwise choose a frame folder and type the onset in seconds).
-- Scrub frames; the red dot is the raw tracker reading at `onset + frame/fps + delay`,
-  placed via the visual-only **preview transform**.
+The whole session plays as **one continuous ~5-min timeline** built from
+`_full_log.csv`: scrubbing through time shows whatever was on screen — a stim clip's
+frame, an attractor image, or the baseline image (`stimuli_by_frames/others/`).
+
+- Scrub with the timeline slider / arrow keys; **Jump to stim** dropdown for quick nav.
+- The red dot is the raw tracker reading at `t + delay`, placed via the visual-only
+  **preview transform**.
 - **Click** the frame to drop/move a marker at the true gaze position.
-- One marker per frame, flagged **normal** or **anchor**.
+- One marker per global frame, flagged **normal** or **anchor**.
 - **Save CSV** writes `<session>_calibration_anchors.csv` next to the inputs.
 
 ### Shortcuts
@@ -60,7 +63,7 @@ Because it relies on the File System Access API, it must be opened in Chrome/Edg
 
 ## Output columns
 
-`stim_id, frame_index, frame_time, fps, delay_ms, is_anchor, raw_pos_x, raw_pos_y,
-raw_timestamp, true_x, true_y, created_at, note`
+`global_frame, frame_time, fps, delay_ms, is_anchor, event_type, event_id,
+stim_frame_index, raw_pos_x, raw_pos_y, raw_timestamp, true_x, true_y, created_at, note`
 
 `true_x/true_y` are centered image coords (origin = image center, range ±900).

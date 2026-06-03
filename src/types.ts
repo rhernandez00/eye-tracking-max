@@ -1,12 +1,12 @@
 // ---- Core domain types ----
 
-/** A stimulus presentation parsed from *_full_log.csv (type === "stim"). */
-export interface StimSegment {
+/** One row of *_full_log.csv, as a slice of the continuous acquisition timeline. */
+export interface TimelineEvent {
   index: number; // order within the session
-  id: string; // stimulus id == frame folder name, e.g. "R4DogF2"
+  type: string; // "stim" | "attractor" | "baseline" | …
+  id: string; // stim folder name, attractor id ("0".."8"), or baseline id
   onset: number; // seconds, same clock as raw eyetrack
-  endTime: number; // onset of next log event (or session end)
-  frameCount: number; // frames available on disk (-1 until enumerated)
+  end: number; // onset of the next event (or acquisition end)
 }
 
 /** Parsed raw eyetrack samples, columnar for fast lookup. */
@@ -17,14 +17,16 @@ export interface RawEyetrack {
   n: number;
 }
 
-/** One marker == one labelled frame. At most one per (stimId, frameIndex). */
+/** One marker == one labelled point on the global timeline (one per global frame). */
 export interface Marker {
-  stimId: string;
-  frameIndex: number;
-  frameTime: number; // onset + frameIndex/fps + delay, at capture time
+  globalFrame: number; // floor(displayTime * fps); unique key along the timeline
+  frameTime: number; // display time in seconds (= globalFrame / fps)
   fps: number;
   delayMs: number;
   isAnchor: boolean;
+  eventType: string; // what was on screen: stim | attractor | baseline
+  eventId: string; // stim folder / attractor id / baseline id
+  stimFrameIndex: number; // local frame within a stim clip, -1 for attractor/baseline
   rawPosX: number; // matched raw sample (tracker space)
   rawPosY: number;
   rawTimestamp: number;

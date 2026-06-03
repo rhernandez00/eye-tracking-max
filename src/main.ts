@@ -9,22 +9,32 @@ import {
   writeTextFile,
   fileExists,
   listFiles,
-  listDirs,
   countFrames,
-  loadFrame,
+  loadImageFile,
   DirHandle,
 } from "./fsaccess";
-import { parseRawEyetrack, nearestSample, parseStimSegments } from "./csv";
+import { parseRawEyetrack, nearestSample, parseTimeline, activeEventIndex } from "./csv";
 import { MarkerStore, markersToCsv, markersFromCsv } from "./markers";
 import { Renderer } from "./render";
 import { pixelToCoord, coordToPixel, rawToPixel, clampPixel } from "./coords";
 import { idbGet, idbSet } from "./idb";
-import { Marker, PreviewTransform, RawEyetrack, StimSegment } from "./types";
+import { Marker, PreviewTransform, RawEyetrack, TimelineEvent } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const EYETRACK_SUFFIXES = ["_raw_eyetrack.csv", "_eyetrack_rough_calibration.csv"];
 const EYETRACK_RE = /_(raw_eyetrack|eyetrack_rough_calibration)\.csv$/;
+const OTHERS_DIR = "others";
+const BASELINE_FILE = "baseline.png";
+
+/** What is on screen at a given global frame. */
+interface Resolved {
+  eventType: string;
+  eventId: string;
+  stimFrameIndex: number; // -1 for attractor/baseline
+  folder: string;
+  fileName: string;
+}
 
 // ---------- state ----------
 let stimuliDir: DirHandle | null = null;
@@ -32,8 +42,8 @@ let sharedDir: DirHandle | null = null;
 
 let sessionPrefix = "";
 let raw: RawEyetrack | null = null;
-let segments: StimSegment[] = []; // from full_log, when available
-let folderMode = false; // true when no full_log: stim-select lists folders
+let events: TimelineEvent[] = [];
+const stimFrameCounts = new Map<string, number>();
 
 const store = new MarkerStore();
 let pt: PreviewTransform = { sx: 1, sy: 1, ox: 0, oy: 0, flipY: false };
@@ -41,10 +51,10 @@ let fps = 30;
 let delayMs = 0;
 let delayStep = 10;
 
-let stimId = "";
-let onset = 0;
-let frameCount = 0;
-let frameIndex = 0;
+let duration = 0; // acquisition length (s)
+let globalFrameCount = 0;
+let globalFrame = 0;
+let current: Resolved | null = null;
 
 let renderer: Renderer;
 let frameToken = 0;
@@ -52,15 +62,49 @@ const bmpCache = new Map<string, ImageBitmap>();
 let playTimer: number | null = null;
 
 // ---------- helpers ----------
-function frameTimeOf(idx: number): number {
-  return onset + idx / fps + delayMs / 1000;
-}
+const displayTime = (g: number): number => g / fps;
 
-function currentRawSample(): { x: number; y: number; t: number } | null {
+function rawSampleAt(g: number): { x: number; y: number; t: number } | null {
   if (!raw || raw.n === 0) return null;
-  const i = nearestSample(raw, frameTimeOf(frameIndex));
+  const i = nearestSample(raw, displayTime(g) + delayMs / 1000);
   if (i < 0) return null;
   return { x: raw.x[i], y: raw.y[i], t: raw.t[i] };
+}
+
+function resolve(g: number): Resolved | null {
+  if (!events.length) return null;
+  const t = displayTime(g);
+  const i = activeEventIndex(events, t);
+  if (i < 0) return null;
+  const ev = events[i];
+  if (ev.type === "stim") {
+    const count = stimFrameCounts.get(ev.id) ?? -1;
+    let local = Math.floor((t - ev.onset) * fps);
+    if (local < 0) local = 0;
+    if (count > 0 && local >= count) local = count - 1;
+    return {
+      eventType: "stim",
+      eventId: ev.id,
+      stimFrameIndex: local,
+      folder: ev.id,
+      fileName: `frame_${String(local).padStart(4, "0")}.jpg`,
+    };
+  }
+  if (ev.type === "attractor") {
+    const n = parseInt(ev.id, 10);
+    const fileName = isNaN(n)
+      ? `attractor-${ev.id}.png`
+      : `attractor-${String(n + 1).padStart(2, "0")}.png`;
+    return { eventType: "attractor", eventId: ev.id, stimFrameIndex: -1, folder: OTHERS_DIR, fileName };
+  }
+  // baseline (and any other type) -> baseline image
+  return {
+    eventType: ev.type || "baseline",
+    eventId: ev.id,
+    stimFrameIndex: -1,
+    folder: OTHERS_DIR,
+    fileName: BASELINE_FILE,
+  };
 }
 
 function toast(msg: string): void {
@@ -78,14 +122,13 @@ function setDirty(dirty: boolean): void {
   b.classList.toggle("dirty", dirty);
 }
 
-// ---------- setup / folder access ----------
+// ---------- init ----------
 async function init(): Promise<void> {
   renderer = new Renderer($("frame-canvas") as HTMLCanvasElement);
   wireSetup();
   wireControls();
   wireShortcuts();
 
-  // try to restore previously-granted folders
   stimuliDir = await restoreStimuliDir();
   sharedDir = await restoreSharedDir();
   if (stimuliDir) $("pick-stimuli").textContent = `📁 ${stimuliDir.name} ✓`;
@@ -116,12 +159,9 @@ async function refreshSessionList(): Promise<void> {
     return;
   }
   const files = await listFiles(sharedDir);
-  // A session's eyetrack file is either _raw_eyetrack.csv or _eyetrack_rough_calibration.csv.
   const sessions = [
     ...new Set(
-      files
-        .filter((f) => EYETRACK_SUFFIXES.some((s) => f.endsWith(s)))
-        .map((f) => f.replace(EYETRACK_RE, ""))
+      files.filter((f) => EYETRACK_SUFFIXES.some((s) => f.endsWith(s))).map((f) => f.replace(EYETRACK_RE, ""))
     ),
   ].sort();
   const sel = $<HTMLSelectElement>("session-select");
@@ -142,11 +182,12 @@ async function loadSession(): Promise<void> {
   if (!stimuliDir) return toast("pick stimuli_by_frames first");
   const prefix = $<HTMLSelectElement>("session-select").value;
   if (!prefix) return;
+  if (!(await ensurePermission(stimuliDir, "read"))) return toast("need stimuli permission");
 
   $("setup-status").textContent = "loading…";
   sessionPrefix = prefix;
 
-  // eyetrack samples — _raw_eyetrack.csv or _eyetrack_rough_calibration.csv
+  // eyetrack samples
   let eyetrackName = "";
   for (const s of EYETRACK_SUFFIXES) {
     if (await fileExists(sharedDir, `${prefix}${s}`)) {
@@ -154,22 +195,16 @@ async function loadSession(): Promise<void> {
       break;
     }
   }
-  if (!eyetrackName) {
-    $("setup-status").textContent = "no eyetrack file for session";
-    return toast("no eyetrack csv found");
-  }
+  if (!eyetrackName) return toast("no eyetrack csv found");
   raw = parseRawEyetrack(await readTextFile(sharedDir, eyetrackName));
+  duration = raw.n ? raw.t[raw.n - 1] : 0;
 
-  // optional full_log -> stim segments
-  segments = [];
-  folderMode = false;
-  if (await fileExists(sharedDir, `${prefix}_full_log.csv`)) {
-    segments = parseStimSegments(await readTextFile(sharedDir, `${prefix}_full_log.csv`));
+  // timeline (required)
+  if (!(await fileExists(sharedDir, `${prefix}_full_log.csv`))) {
+    return toast("missing _full_log.csv — needed for the timeline");
   }
-  if (segments.length === 0) {
-    folderMode = true;
-    if (!(await ensurePermission(stimuliDir, "read"))) return toast("need stimuli permission");
-  }
+  events = parseTimeline(await readTextFile(sharedDir, `${prefix}_full_log.csv`), duration);
+  stimFrameCounts.clear();
 
   // restore per-session config
   const cfg = await idbGet<any>(`cfg:${prefix}`);
@@ -179,15 +214,24 @@ async function loadSession(): Promise<void> {
     pt = cfg.pt ?? pt;
   }
   applyCfgToInputs();
+  recomputeTimeline();
 
-  // load markers: prefer existing CSV, else autosave
   await loadMarkers(prefix);
+  populateStimJump();
 
-  await populateStimSelect();
   $("workspace").classList.remove("hidden");
-  $("setup-status").textContent = `loaded ${prefix} (${raw.n} samples)`;
+  $("setup-status").textContent = `loaded ${prefix} (${raw.n} samples, ${events.length} events)`;
 
-  await selectStimByUi();
+  globalFrame = 0;
+  bmpCache.clear();
+  await showFrame();
+  renderTable();
+}
+
+function recomputeTimeline(): void {
+  globalFrameCount = Math.max(1, Math.floor(duration * fps) + 1);
+  const tl = $<HTMLInputElement>("timeline");
+  tl.max = String(globalFrameCount - 1);
 }
 
 async function loadMarkers(prefix: string): Promise<void> {
@@ -195,66 +239,32 @@ async function loadMarkers(prefix: string): Promise<void> {
   if (await fileExists(sharedDir!, outName)) {
     store.load(markersFromCsv(await readTextFile(sharedDir!, outName)));
   } else {
-    const saved = await idbGet<Marker[]>(`session:${prefix}`);
-    store.load(saved ?? []);
+    store.load((await idbGet<Marker[]>(`session:${prefix}`)) ?? []);
   }
   setDirty(false);
 }
 
-async function populateStimSelect(): Promise<void> {
+function populateStimJump(): void {
   const sel = $<HTMLSelectElement>("stim-select");
-  sel.innerHTML = "";
-  if (folderMode) {
-    const dirs = await listDirs(stimuliDir!);
-    for (const d of dirs) {
-      const o = document.createElement("option");
-      o.value = d;
-      o.textContent = d;
-      sel.appendChild(o);
-    }
-  } else {
-    for (const s of segments) {
-      const o = document.createElement("option");
-      o.value = String(s.index);
-      o.textContent = `#${s.index + 1}  ${s.id}  @${s.onset.toFixed(2)}s`;
-      sel.appendChild(o);
-    }
+  sel.innerHTML = '<option value="">— jump to stim —</option>';
+  for (const ev of events) {
+    if (ev.type !== "stim") continue;
+    const o = document.createElement("option");
+    o.value = String(ev.index);
+    o.textContent = `${ev.onset.toFixed(2)}s  ${ev.id}`;
+    sel.appendChild(o);
   }
-}
-
-async function selectStimByUi(): Promise<void> {
-  const sel = $<HTMLSelectElement>("stim-select");
-  if (folderMode) {
-    stimId = sel.value || "";
-    onset = parseFloat($<HTMLInputElement>("onset-input").value) || 0;
-  } else {
-    const seg = segments[+sel.value] ?? segments[0];
-    stimId = seg.id;
-    onset = seg.onset;
-    $<HTMLInputElement>("onset-input").value = onset.toFixed(3);
-  }
-  frameCount = stimId ? await countFrames(stimuliDir!, stimId) : 0;
-  if (frameCount < 0) {
-    toast(`frames folder "${stimId}" not found`);
-    frameCount = 0;
-  }
-  frameIndex = 0;
-  bmpCache.clear();
-  $("stim-meta").textContent = stimId ? `${frameCount} frames` : "no stim";
-  await showFrame();
-  renderTable();
 }
 
 // ---------- frame display ----------
-async function getBitmap(idx: number): Promise<ImageBitmap | null> {
-  if (!stimId || idx < 0 || idx >= frameCount) return null;
-  const key = `${stimId}#${idx}`;
+async function getBitmap(folder: string, fileName: string): Promise<ImageBitmap | null> {
+  const key = `${folder}/${fileName}`;
   const hit = bmpCache.get(key);
   if (hit) return hit;
   try {
-    const bmp = await loadFrame(stimuliDir!, stimId, idx);
+    const bmp = await loadImageFile(stimuliDir!, folder, fileName);
     bmpCache.set(key, bmp);
-    if (bmpCache.size > 60) {
+    if (bmpCache.size > 80) {
       const first = bmpCache.keys().next().value as string;
       bmpCache.delete(first);
     }
@@ -264,55 +274,91 @@ async function getBitmap(idx: number): Promise<ImageBitmap | null> {
   }
 }
 
+async function ensureStimCount(g: number): Promise<void> {
+  const i = activeEventIndex(events, displayTime(g));
+  if (i < 0) return;
+  const ev = events[i];
+  if (ev.type === "stim" && !stimFrameCounts.has(ev.id)) {
+    stimFrameCounts.set(ev.id, await countFrames(stimuliDir!, ev.id));
+  }
+}
+
 async function showFrame(): Promise<void> {
   const token = ++frameToken;
-  const bmp = await getBitmap(frameIndex);
-  if (token !== frameToken) return; // superseded
+  await ensureStimCount(globalFrame);
+  if (token !== frameToken) return;
+
+  current = resolve(globalFrame);
+  let bmp: ImageBitmap | null = null;
+  if (current) bmp = await getBitmap(current.folder, current.fileName);
+  if (token !== frameToken) return;
+
   renderer.setFrame(bmp);
   redraw();
   updateFrameInfo();
-  getBitmap(frameIndex + 1); // prefetch
+
+  // prefetch next
+  const rn = resolve(globalFrame + 1);
+  if (rn) getBitmap(rn.folder, rn.fileName);
 }
 
 function redraw(): void {
-  const s = currentRawSample();
+  const s = rawSampleAt(globalFrame);
   renderer.draw({
     rawX: s ? s.x : null,
     rawY: s ? s.y : null,
     pt,
-    marker: store.get(stimId, frameIndex) ?? null,
+    marker: store.get(globalFrame) ?? null,
   });
   updateMarkerInfo();
 }
 
 function updateFrameInfo(): void {
-  $("frame-info").textContent = `${frameCount ? frameIndex + 1 : 0} / ${frameCount}`;
-  $("frame-time").textContent = `t=${frameTimeOf(frameIndex).toFixed(3)}s`;
+  $("frame-info").textContent = `${globalFrameCount ? globalFrame + 1 : 0} / ${globalFrameCount}`;
+  $("frame-time").textContent = `t=${displayTime(globalFrame).toFixed(3)}s`;
+  $<HTMLInputElement>("timeline").value = String(globalFrame);
+
+  const el = $("event-info");
+  if (!current) {
+    el.textContent = "—";
+    return;
+  }
+  let label = current.eventType;
+  if (current.eventType === "stim") {
+    const c = stimFrameCounts.get(current.eventId) ?? -1;
+    label = `stim ${current.eventId} (${current.stimFrameIndex + 1}${c > 0 ? "/" + c : ""})`;
+  } else if (current.eventType === "attractor") {
+    label = `attractor ${current.eventId}`;
+  }
+  el.innerHTML = `<span class="ev ${current.eventType}">${label}</span>`;
 }
 
 function updateMarkerInfo(): void {
-  const m = store.get(stimId, frameIndex);
-  const s = currentRawSample();
+  const m = store.get(globalFrame);
+  const s = rawSampleAt(globalFrame);
   const raws = s ? `raw(${s.x.toFixed(0)}, ${s.y.toFixed(0)})` : "raw(–)";
   $("marker-current").textContent = m
     ? `${m.isAnchor ? "ANCHOR" : "normal"}  true(${m.trueX.toFixed(0)}, ${m.trueY.toFixed(0)})  ${raws}`
-    : `(no marker on this frame)  ${raws}`;
+    : `(no marker here)  ${raws}`;
 }
 
 // ---------- navigation ----------
-function gotoFrame(idx: number): void {
-  if (frameCount === 0) return;
-  frameIndex = Math.max(0, Math.min(frameCount - 1, idx));
+function gotoFrame(g: number): void {
+  if (globalFrameCount === 0) return;
+  globalFrame = Math.max(0, Math.min(globalFrameCount - 1, Math.round(g)));
   showFrame();
   highlightTableRow();
 }
 
-function stepStim(d: number): void {
-  const sel = $<HTMLSelectElement>("stim-select");
-  const n = sel.options.length;
-  if (!n) return;
-  sel.selectedIndex = Math.max(0, Math.min(n - 1, sel.selectedIndex + d));
-  selectStimByUi();
+function stepStim(dir: number): void {
+  const stims = events.filter((e) => e.type === "stim");
+  if (!stims.length) return;
+  const t = displayTime(globalFrame);
+  const target =
+    dir > 0
+      ? stims.find((s) => s.onset > t + 1e-4)
+      : [...stims].reverse().find((s) => s.onset < t - 1e-4);
+  if (target) gotoFrame(Math.round(target.onset * fps));
 }
 
 function play(): void {
@@ -324,24 +370,27 @@ function play(): void {
   }
   $("play").textContent = "⏸ pause";
   playTimer = window.setInterval(() => {
-    if (frameIndex >= frameCount - 1) {
-      play(); // stop at end
+    if (globalFrame >= globalFrameCount - 1) {
+      play();
       return;
     }
-    gotoFrame(frameIndex + 1);
+    gotoFrame(globalFrame + 1);
   }, 1000 / fps);
 }
 
 // ---------- markers ----------
 function makeMarker(trueX: number, trueY: number, isAnchor: boolean): Marker {
-  const s = currentRawSample();
+  const s = rawSampleAt(globalFrame);
+  const r = current ?? resolve(globalFrame);
   return {
-    stimId,
-    frameIndex,
-    frameTime: frameTimeOf(frameIndex),
+    globalFrame,
+    frameTime: displayTime(globalFrame),
     fps,
     delayMs,
     isAnchor,
+    eventType: r ? r.eventType : "",
+    eventId: r ? r.eventId : "",
+    stimFrameIndex: r ? r.stimFrameIndex : -1,
     rawPosX: s ? s.x : NaN,
     rawPosY: s ? s.y : NaN,
     rawTimestamp: s ? s.t : NaN,
@@ -354,19 +403,14 @@ function makeMarker(trueX: number, trueY: number, isAnchor: boolean): Marker {
 
 function placeMarkerAtPixel(px: number, py: number): void {
   const { x, y } = pixelToCoord(clampPixel(px), clampPixel(py));
-  const existing = store.get(stimId, frameIndex);
-  store.put(makeMarkerKeepType(x, y, existing));
+  const existing = store.get(globalFrame);
+  store.put(makeMarker(x, y, existing ? existing.isAnchor : false));
   afterMarkerChange();
 }
 
-function makeMarkerKeepType(x: number, y: number, existing?: Marker): Marker {
-  return makeMarker(x, y, existing ? existing.isAnchor : false);
-}
-
-/** Add/replace marker at the current raw-eye preview position. */
 function addMarkerAtRaw(isAnchor: boolean): void {
-  const s = currentRawSample();
-  if (!s) return toast("no raw sample at this time");
+  const s = rawSampleAt(globalFrame);
+  if (!s) return toast("no raw sample here");
   const { px, py } = rawToPixel(s.x, s.y, pt);
   const { x, y } = pixelToCoord(clampPixel(px), clampPixel(py));
   store.put(makeMarker(x, y, isAnchor));
@@ -374,19 +418,19 @@ function addMarkerAtRaw(isAnchor: boolean): void {
 }
 
 function toggleFlag(): void {
-  const m = store.get(stimId, frameIndex);
-  if (!m) return toast("no marker on this frame");
+  const m = store.get(globalFrame);
+  if (!m) return toast("no marker here");
   m.isAnchor = !m.isAnchor;
   store.put(m);
   afterMarkerChange();
 }
 
 function deleteMarker(): void {
-  if (store.delete(stimId, frameIndex)) afterMarkerChange();
+  if (store.delete(globalFrame)) afterMarkerChange();
 }
 
 function nudge(dxPx: number, dyPx: number): void {
-  const m = store.get(stimId, frameIndex);
+  const m = store.get(globalFrame);
   if (!m) return;
   const { px, py } = coordToPixel(m.trueX, m.trueY);
   const { x, y } = pixelToCoord(clampPixel(px + dxPx), clampPixel(py + dyPx));
@@ -406,9 +450,7 @@ function afterMarkerChange(): void {
 let autosaveTimer: number | null = null;
 function autosave(): void {
   if (autosaveTimer != null) window.clearTimeout(autosaveTimer);
-  autosaveTimer = window.setTimeout(() => {
-    idbSet(`session:${sessionPrefix}`, store.all());
-  }, 400);
+  autosaveTimer = window.setTimeout(() => idbSet(`session:${sessionPrefix}`, store.all()), 400);
 }
 
 // ---------- table ----------
@@ -417,45 +459,33 @@ function renderTable(): void {
   tbody.innerHTML = "";
   for (const m of store.all()) {
     const tr = document.createElement("tr");
-    tr.dataset.stim = m.stimId;
-    tr.dataset.frame = String(m.frameIndex);
+    tr.dataset.g = String(m.globalFrame);
+    const ev =
+      m.eventType === "stim"
+        ? `${m.eventId}#${m.stimFrameIndex}`
+        : `${m.eventType} ${m.eventId}`;
     tr.innerHTML =
-      `<td>${m.stimId}</td><td>${m.frameIndex}</td>` +
+      `<td>${m.frameTime.toFixed(2)}</td><td>${ev}</td>` +
       `<td><span class="tag ${m.isAnchor ? "anchor" : "normal"}">${m.isAnchor ? "anchor" : "normal"}</span></td>` +
       `<td>${m.trueX.toFixed(0)}</td><td>${m.trueY.toFixed(0)}</td>` +
       `<td>${isNaN(m.rawPosX) ? "–" : m.rawPosX.toFixed(0)}</td>` +
       `<td>${isNaN(m.rawPosY) ? "–" : m.rawPosY.toFixed(0)}</td>`;
-    tr.addEventListener("click", () => jumpToMarker(m.stimId, m.frameIndex));
+    tr.addEventListener("click", () => gotoFrame(m.globalFrame));
     tbody.appendChild(tr);
   }
   highlightTableRow();
 }
 
 function highlightTableRow(): void {
-  const rows = $("marker-table").querySelectorAll("tbody tr");
-  rows.forEach((r) => {
-    const el = r as HTMLElement;
-    el.classList.toggle(
-      "sel",
-      el.dataset.stim === stimId && el.dataset.frame === String(frameIndex)
-    );
-  });
+  $("marker-table")
+    .querySelectorAll("tbody tr")
+    .forEach((r) => {
+      const el = r as HTMLElement;
+      el.classList.toggle("sel", el.dataset.g === String(globalFrame));
+    });
 }
 
-async function jumpToMarker(mStim: string, mFrame: number): Promise<void> {
-  const sel = $<HTMLSelectElement>("stim-select");
-  if (mStim !== stimId) {
-    if (folderMode) sel.value = mStim;
-    else {
-      const seg = segments.find((s) => s.id === mStim);
-      if (seg) sel.value = String(seg.index);
-    }
-    await selectStimByUi();
-  }
-  gotoFrame(mFrame);
-}
-
-// ---------- controls wiring ----------
+// ---------- controls ----------
 function applyCfgToInputs(): void {
   $<HTMLInputElement>("fps-input").value = String(fps);
   $<HTMLInputElement>("delay-input").value = String(delayMs);
@@ -471,28 +501,30 @@ function saveCfg(): void {
 }
 
 function wireControls(): void {
-  $("stim-select").addEventListener("change", () => selectStimByUi());
-  $("onset-input").addEventListener("change", () => {
-    if (folderMode) {
-      onset = parseFloat($<HTMLInputElement>("onset-input").value) || 0;
-      redraw();
-      updateFrameInfo();
-    }
+  $<HTMLSelectElement>("stim-select").addEventListener("change", (e) => {
+    const v = (e.target as HTMLSelectElement).value;
+    if (v === "") return;
+    const ev = events[+v];
+    if (ev) gotoFrame(Math.round(ev.onset * fps));
   });
 
   $("first").addEventListener("click", () => gotoFrame(0));
-  $("prev10").addEventListener("click", () => gotoFrame(frameIndex - 10));
-  $("prev").addEventListener("click", () => gotoFrame(frameIndex - 1));
-  $("next").addEventListener("click", () => gotoFrame(frameIndex + 1));
-  $("next10").addEventListener("click", () => gotoFrame(frameIndex + 10));
-  $("last").addEventListener("click", () => gotoFrame(frameCount - 1));
+  $("prev10").addEventListener("click", () => gotoFrame(globalFrame - 10));
+  $("prev").addEventListener("click", () => gotoFrame(globalFrame - 1));
+  $("next").addEventListener("click", () => gotoFrame(globalFrame + 1));
+  $("next10").addEventListener("click", () => gotoFrame(globalFrame + 10));
+  $("last").addEventListener("click", () => gotoFrame(globalFrameCount - 1));
   $("play").addEventListener("click", play);
+  $<HTMLInputElement>("timeline").addEventListener("input", (e) =>
+    gotoFrame(+(e.target as HTMLInputElement).value)
+  );
 
   $("fps-input").addEventListener("change", (e) => {
+    const t = displayTime(globalFrame);
     fps = Math.max(1, parseInt((e.target as HTMLInputElement).value) || 30);
+    recomputeTimeline();
     saveCfg();
-    redraw();
-    updateFrameInfo();
+    gotoFrame(Math.round(t * fps)); // keep time position
   });
 
   const delayInput = $<HTMLInputElement>("delay-input");
@@ -500,7 +532,6 @@ function wireControls(): void {
     delayMs = parseFloat(delayInput.value) || 0;
     saveCfg();
     redraw();
-    updateFrameInfo();
   });
   $("delay-step").addEventListener("change", (e) => {
     delayStep = parseFloat((e.target as HTMLInputElement).value) || 10;
@@ -522,7 +553,6 @@ function wireControls(): void {
     });
   }
 
-  // marker buttons
   $("btn-add-normal").addEventListener("click", () => addMarkerAtRaw(false));
   $("btn-add-anchor").addEventListener("click", () => addMarkerAtRaw(true));
   $("btn-toggle").addEventListener("click", toggleFlag);
@@ -530,7 +560,6 @@ function wireControls(): void {
   $("btn-save").addEventListener("click", saveCsv);
   $("btn-export-dl").addEventListener("click", downloadCsv);
 
-  // click on canvas = place/move marker (keeps type)
   $("frame-canvas").addEventListener("click", (e) => {
     const { px, py } = renderer.clientToImage((e as MouseEvent).clientX, (e as MouseEvent).clientY);
     placeMarkerAtPixel(px, py);
@@ -542,13 +571,11 @@ function changeDelay(d: number): void {
   $<HTMLInputElement>("delay-input").value = String(delayMs);
   saveCfg();
   redraw();
-  updateFrameInfo();
 }
 
 // ---------- keyboard ----------
 function wireShortcuts(): void {
   window.addEventListener("keydown", (e) => {
-    // Ctrl+S works everywhere
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
       saveCsv();
@@ -562,12 +589,12 @@ function wireShortcuts(): void {
       case "ArrowLeft":
         e.preventDefault();
         if (ctrl) nudge(e.shiftKey ? -10 : -1, 0);
-        else gotoFrame(frameIndex - (e.shiftKey ? 10 : 1));
+        else gotoFrame(globalFrame - (e.shiftKey ? 10 : 1));
         break;
       case "ArrowRight":
         e.preventDefault();
         if (ctrl) nudge(e.shiftKey ? 10 : 1, 0);
-        else gotoFrame(frameIndex + (e.shiftKey ? 10 : 1));
+        else gotoFrame(globalFrame + (e.shiftKey ? 10 : 1));
         break;
       case "ArrowUp":
         if (ctrl) {
@@ -595,7 +622,7 @@ function wireShortcuts(): void {
         gotoFrame(0);
         break;
       case "End":
-        gotoFrame(frameCount - 1);
+        gotoFrame(globalFrameCount - 1);
         break;
       case "a":
         addMarkerAtRaw(false);
@@ -625,15 +652,13 @@ function wireShortcuts(): void {
 // ---------- save ----------
 async function saveCsv(): Promise<void> {
   if (!sharedDir || !sessionPrefix) return;
-  const csv = markersToCsv(store.all());
-  await writeTextFile(sharedDir, `${sessionPrefix}_calibration_anchors.csv`, csv);
+  await writeTextFile(sharedDir, `${sessionPrefix}_calibration_anchors.csv`, markersToCsv(store.all()));
   setDirty(false);
   toast(`saved ${store.size} markers → ${sessionPrefix}_calibration_anchors.csv`);
 }
 
 function downloadCsv(): void {
-  const csv = markersToCsv(store.all());
-  const blob = new Blob([csv], { type: "text/csv" });
+  const blob = new Blob([markersToCsv(store.all())], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `${sessionPrefix}_calibration_anchors.csv`;

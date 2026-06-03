@@ -46,7 +46,12 @@ pos_x, pos_y, ps, timestamp, href_x, href_y, pupil_x, pupil_y, vel_x, vel_y
 - `pos_x, pos_y` = eye position in **tracker/screen space** (e.g. ~510, ~1213) — NOT image pixels.
 - ~300k rows / 5 min. Parsed once into typed arrays; nearest-sample lookup by **binary search on timestamp**.
 
-**`<session>_full_log.csv`** — `type, onset, id`. The `stim` rows give **stim onset → frame folder id** (e.g. `R4DogF2`). This is the timing spine. If absent, the app falls back to a manual stim-folder picker + onset field.
+**`<session>_full_log.csv`** — `type, onset, id`. The whole acquisition is rendered as **one continuous timeline** from this file (required). Each row is active from its `onset` until the next row's onset. By `type`:
+- `stim` → frames from folder `id` (`<id>/frame_####.jpg`) at local frame `floor((t − onset)·fps)`.
+- `attractor` → `others/attractor-0(id+1).png` (id `0`→`attractor-01.png`, … `8`→`attractor-09.png`).
+- `baseline` (any id) → `others/baseline.png`.
+
+Attractor/baseline images live in `stimuli_by_frames/others/`.
 
 **`<session>_calibration_events.csv`** — known target positions at known times.
 ```
@@ -57,13 +62,15 @@ trial_number, x, y, timestamp
 ### Frame folders
 `stimuli_by_frames/<stim_id>/frame_0000.jpg …` — **1080×1080**, ~97 frames/clip.
 
-### Timing model
+### Timing model (continuous timeline)
 ```
-frame_time(idx) = stim_onset + idx / fps + delay
-raw_sample      = nearest row in raw_eyetrack to frame_time
+global_frame g  ↔  display_time t = g / fps          (fps = 30, fixed)
+active event    = last full_log row with onset ≤ t
+image           = stim frame / attractor / baseline  (per active event, above)
+raw_sample      = nearest raw row to (t + delay)      (overlay only)
 ```
-- **fps** = configurable parameter (fixed across clips). ⚠️ TODO: confirm the real value (UI default 30, editable). Wrong fps drifts the overlay later in the clip — a quick visual check against a clip with motion confirms it.
-- **delay** = user-adjustable time shift (reaction-time compensation), see §5.
+- One global frame grid spans the whole acquisition (≈ duration × fps frames).
+- **delay** shifts only which raw sample is overlaid (reaction-time compensation); the displayed image stays at `t`. See §5.
 
 ---
 
@@ -116,9 +123,10 @@ The raw `pos_x/pos_y` are in tracker space, not the 1080² image. To *show* the 
 Written to `shared_data/` as **`<session>_calibration_anchors.csv`** (mirrors the input naming so it sorts next to them). One row per anchor:
 
 ```
-stim_id, frame_index, frame_time, fps, delay_ms,
+global_frame, frame_time, fps, delay_ms, is_anchor,
+event_type, event_id, stim_frame_index,
 raw_pos_x, raw_pos_y, raw_timestamp,
-true_x, true_y,           # image-space pixels (0–1080), where the user clicked
+true_x, true_y,           # centered image coords (±900), where the user clicked
 created_at, note
 ```
 

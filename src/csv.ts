@@ -1,4 +1,4 @@
-import { RawEyetrack, StimSegment } from "./types";
+import { RawEyetrack, TimelineEvent } from "./types";
 
 /** Split a CSV header line into column-index map. */
 function headerIndex(line: string): Record<string, number> {
@@ -85,34 +85,47 @@ export function nearestSample(raw: RawEyetrack, target: number): number {
 }
 
 /**
- * Parse *_full_log.csv (type,onset,id) into ordered stim segments.
- * endTime = onset of the next log event (any type), else +Infinity.
+ * Parse *_full_log.csv (type,onset,id) into the ordered acquisition timeline.
+ * Each event spans [onset, end); end = next event's onset, last = `endTime`.
  */
-export function parseStimSegments(text: string): StimSegment[] {
+export function parseTimeline(text: string, endTime: number): TimelineEvent[] {
   const lines = text.split(/\r?\n/).filter((l) => l.length);
   const header = headerIndex(lines[0]);
   const it = header["type"] ?? 0;
   const io = header["onset"] ?? 1;
   const id = header["id"] ?? 2;
 
-  const events: { type: string; onset: number; id: string }[] = [];
+  const rows: { type: string; onset: number; id: string }[] = [];
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(",");
-    events.push({ type: c[it]?.trim(), onset: +c[io], id: c[id]?.trim() });
+    rows.push({ type: c[it]?.trim(), onset: +c[io], id: c[id]?.trim() });
   }
-  events.sort((a, b) => a.onset - b.onset);
+  rows.sort((a, b) => a.onset - b.onset);
 
-  const segs: StimSegment[] = [];
-  for (let i = 0; i < events.length; i++) {
-    if (events[i].type !== "stim") continue;
-    const next = events[i + 1];
-    segs.push({
-      index: segs.length,
-      id: events[i].id,
-      onset: events[i].onset,
-      endTime: next ? next.onset : Number.POSITIVE_INFINITY,
-      frameCount: -1,
+  const events: TimelineEvent[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    events.push({
+      index: i,
+      type: rows[i].type,
+      id: rows[i].id,
+      onset: rows[i].onset,
+      end: i + 1 < rows.length ? rows[i + 1].onset : endTime,
     });
   }
-  return segs;
+  return events;
+}
+
+/** Index of the timeline event active at time `t` (last onset <= t), or -1. */
+export function activeEventIndex(events: TimelineEvent[], t: number): number {
+  let lo = 0;
+  let hi = events.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (events[mid].onset <= t) {
+      ans = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return ans;
 }

@@ -74,6 +74,12 @@ label { display: inline-flex; align-items: center; gap: 6px; }
   background: #000;
 }
 
+.timeline { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.event-info { font-variant-numeric: tabular-nums; }
+.event-info .ev { padding: 1px 7px; border-radius: 4px; margin-left: 8px; }
+.event-info .ev.stim { background: #173a30; color: var(--normal); }
+.event-info .ev.attractor { background: #3a3417; color: var(--anchor); }
+.event-info .ev.baseline { background: #2a2f38; color: var(--muted); }
 .transport { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .frame-info { min-width: 86px; text-align: center; font-variant-numeric: tabular-nums; }
 .rowcontrols { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
