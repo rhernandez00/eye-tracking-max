@@ -74,11 +74,30 @@ label { display: inline-flex; align-items: center; gap: 6px; }
   background: #000;
 }
 
+.timeline { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.event-info { font-variant-numeric: tabular-nums; }
+.event-info .ev { padding: 1px 7px; border-radius: 4px; margin-left: 8px; }
+.event-info .ev.stim { background: #173a30; color: var(--normal); }
+.event-info .ev.attractor { background: #3a3417; color: var(--anchor); }
+.event-info .ev.baseline { background: #2a2f38; color: var(--muted); }
 .transport { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .frame-info { min-width: 86px; text-align: center; font-variant-numeric: tabular-nums; }
 .rowcontrols { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .preview-xf summary { cursor: pointer; color: var(--muted); }
 .preview-xf { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+
+/* ---- calibration panel ---- */
+.calib { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+.calib summary { cursor: pointer; color: var(--muted); }
+.calib-motion { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.file-btn { cursor: pointer; }
+.calib-list { display: flex; flex-direction: column; gap: 4px; }
+.calib-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 3px 0; }
+.calib-show { gap: 6px; min-width: 0; }
+.calib-show input:disabled + .swatch { opacity: .4; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+.calib-status { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.calib-status .stale { color: var(--anchor); }
 
 /* ---- sidebar ---- */
 #sidebar {
@@ -105,6 +124,8 @@ label { display: inline-flex; align-items: center; gap: 6px; }
 .tag { padding: 1px 6px; border-radius: 4px; font-size: 11px; }
 .tag.anchor { background: #4a3f12; color: var(--anchor); }
 .tag.normal { background: #173a30; color: var(--normal); }
+.row-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; }
+.row-del:hover { color: var(--danger); }
 
 .side-foot { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 

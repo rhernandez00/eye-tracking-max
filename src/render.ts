@@ -29,6 +29,7 @@ export class Renderer {
     rawY: number | null;
     pt: PreviewTransform;
     marker: Marker | null;
+    overlays?: { x: number; y: number; color: string; label: string }[];
   }): void {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, IMAGE_SIZE, IMAGE_SIZE);
@@ -48,10 +49,44 @@ export class Renderer {
     ctx.lineTo(IMAGE_SIZE, IMAGE_SIZE / 2);
     ctx.stroke();
 
-    // raw eye marker (preview)
+    // raw eye marker — the eye-tracker's reported position, shown on every
+    // frame. Mapped through the preview transform; if it lands outside the
+    // frame it's clamped to the nearest edge (with a ring) so it stays visible.
     if (opts.rawX != null && opts.rawY != null) {
       const { px, py } = rawToPixel(opts.rawX, opts.rawY, opts.pt);
-      this.dot(px, py, 9, "#ff5d7a", "raw");
+      const cx = Math.max(0, Math.min(IMAGE_SIZE, px));
+      const cy = Math.max(0, Math.min(IMAGE_SIZE, py));
+      const offscreen = cx !== px || cy !== py;
+      this.dot(cx, cy, 9, "#ff5d7a", offscreen ? "raw ›" : "raw");
+      if (offscreen) {
+        ctx.strokeStyle = "#ff5d7a";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // predicted-gaze overlays, one per visible calibration model. Drawn in
+    // centered coord space; clamped to the canvas (with a ring) when off-frame.
+    if (opts.overlays) {
+      for (const o of opts.overlays) {
+        const { px, py } = coordToPixel(o.x, o.y);
+        const cx = Math.max(0, Math.min(IMAGE_SIZE, px));
+        const cy = Math.max(0, Math.min(IMAGE_SIZE, py));
+        const off = cx !== px || cy !== py;
+        this.cross(cx, cy, 13, o.color);
+        if (off) {
+          ctx.strokeStyle = o.color;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 17, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.fillStyle = o.color;
+        ctx.font = "18px system-ui";
+        ctx.fillText(o.label, cx + 16, cy + 6);
+      }
     }
 
     // the marker for this frame (true position)

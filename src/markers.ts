@@ -1,34 +1,27 @@
 import { Marker } from "./types";
 
-/** Key for the one-marker-per-frame map. */
-export function markerKey(stimId: string, frameIndex: number): string {
-  return `${stimId}#${frameIndex}`;
-}
-
 export class MarkerStore {
-  private map = new Map<string, Marker>();
+  private map = new Map<number, Marker>(); // keyed by globalFrame
   dirty = false;
 
-  get(stimId: string, frameIndex: number): Marker | undefined {
-    return this.map.get(markerKey(stimId, frameIndex));
+  get(globalFrame: number): Marker | undefined {
+    return this.map.get(globalFrame);
   }
 
   put(m: Marker): void {
-    this.map.set(markerKey(m.stimId, m.frameIndex), m);
+    this.map.set(m.globalFrame, m);
     this.dirty = true;
   }
 
-  delete(stimId: string, frameIndex: number): boolean {
-    const ok = this.map.delete(markerKey(stimId, frameIndex));
+  delete(globalFrame: number): boolean {
+    const ok = this.map.delete(globalFrame);
     if (ok) this.dirty = true;
     return ok;
   }
 
-  /** All markers, ordered by stim id then frame index. */
+  /** All markers ordered along the timeline. */
   all(): Marker[] {
-    return [...this.map.values()].sort(
-      (a, b) => (a.stimId < b.stimId ? -1 : a.stimId > b.stimId ? 1 : a.frameIndex - b.frameIndex)
-    );
+    return [...this.map.values()].sort((a, b) => a.globalFrame - b.globalFrame);
   }
 
   get size(): number {
@@ -37,14 +30,15 @@ export class MarkerStore {
 
   load(markers: Marker[]): void {
     this.map.clear();
-    for (const m of markers) this.map.set(markerKey(m.stimId, m.frameIndex), m);
+    for (const m of markers) this.map.set(m.globalFrame, m);
     this.dirty = false;
   }
 }
 
+// Which video/stimulus was on screen is not part of the output — only the
+// raw↔true calibration pair and its timing are written.
 const CSV_HEADER = [
-  "stim_id",
-  "frame_index",
+  "global_frame",
   "frame_time",
   "fps",
   "delay_ms",
@@ -67,8 +61,7 @@ export function markersToCsv(markers: Marker[]): string {
   for (const m of markers) {
     lines.push(
       [
-        m.stimId,
-        m.frameIndex,
+        m.globalFrame,
         m.frameTime.toFixed(4),
         m.fps,
         m.delayMs,
@@ -95,12 +88,14 @@ export function markersFromCsv(text: string): Marker[] {
   for (let i = 1; i < lines.length; i++) {
     const c = splitCsvLine(lines[i]);
     out.push({
-      stimId: c[h["stim_id"]],
-      frameIndex: +c[h["frame_index"]],
+      globalFrame: +c[h["global_frame"]],
       frameTime: +c[h["frame_time"]],
       fps: +c[h["fps"]],
       delayMs: +c[h["delay_ms"]],
       isAnchor: c[h["is_anchor"]] === "1" || c[h["is_anchor"]]?.toLowerCase() === "true",
+      eventType: h["event_type"] != null ? c[h["event_type"]] ?? "" : "",
+      eventId: h["event_id"] != null ? c[h["event_id"]] ?? "" : "",
+      stimFrameIndex: h["stim_frame_index"] != null ? +c[h["stim_frame_index"]] : -1,
       rawPosX: +c[h["raw_pos_x"]],
       rawPosY: +c[h["raw_pos_y"]],
       rawTimestamp: +c[h["raw_timestamp"]],

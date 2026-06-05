@@ -12,7 +12,8 @@
         <div class="brand">Eye-Tracking Calibration</div>
         <div class="setup">
           <button id="pick-stimuli" class="btn">📁 stimuli_by_frames…</button>
-          <button id="pick-shared" class="btn">📁 shared_data…</button>
+          <button id="pick-shared" class="btn">📁 data…</button>
+          <button id="pick-motion" class="btn">📁 motion (fwd)…</button>
           <select id="session-select" class="select" disabled>
             <option value="">— select session —</option>
           </select>
@@ -25,27 +26,26 @@
         <!-- ===== Left: frame + controls ===== -->
         <section id="stage">
           <div class="stage-head">
-            <label>Stim
+            <label>Jump to stim
               <select id="stim-select" class="select"></select>
             </label>
-            <label>onset (s)
-              <input id="onset-input" class="num" type="number" step="0.001" value="0" />
-            </label>
-            <span id="stim-meta" class="muted"></span>
+            <span id="event-info" class="event-info"></span>
           </div>
 
           <div id="canvas-wrap">
             <canvas id="frame-canvas" width="720" height="720"></canvas>
           </div>
 
+          <input id="timeline" class="timeline" type="range" min="0" max="0" value="0" step="1" />
+
           <div class="transport">
-            <button id="first" class="btn" title="First frame (Home)">⏮</button>
+            <button id="first" class="btn" title="Start (Home)">⏮</button>
             <button id="prev10" class="btn" title="-10 (Shift+←)">⏪</button>
             <button id="prev" class="btn" title="Prev frame (←)">◀</button>
             <span id="frame-info" class="frame-info">0 / 0</span>
             <button id="next" class="btn" title="Next frame (→)">▶</button>
             <button id="next10" class="btn" title="+10 (Shift+→)">⏩</button>
-            <button id="last" class="btn" title="Last frame (End)">⏭</button>
+            <button id="last" class="btn" title="End (End)">⏭</button>
             <button id="play" class="btn" title="Play/Pause (Space)">▶ play</button>
             <span id="frame-time" class="muted"></span>
           </div>
@@ -72,6 +72,21 @@
               <label class="chk"><input id="pt-flipy" type="checkbox" /> flip Y</label>
             </div>
           </details>
+
+          <details class="calib" open>
+            <summary>Calibrations (run &amp; overlay)</summary>
+            <div class="calib-motion">
+              <label class="btn sm file-btn">📈 motion (_fwd.txt)…
+                <input id="motion-file" type="file" accept=".txt,.par,.tsv" hidden />
+              </label>
+              <span id="motion-info" class="muted small">no motion file</span>
+              <label class="muted small">TR (s)
+                <input id="tr-input" class="num" type="number" min="0.1" step="0.1" value="1" />
+              </label>
+              <button id="calib-run-all" class="btn sm" title="Run/refit every method">Run all</button>
+            </div>
+            <div id="calib-list" class="calib-list"></div>
+          </details>
         </section>
 
         <!-- ===== Right: markers ===== -->
@@ -94,9 +109,9 @@
             <table id="marker-table">
               <thead>
                 <tr>
-                  <th>stim</th><th>frm</th><th>type</th>
+                  <th>t (s)</th><th>event</th><th>flag</th>
                   <th>true x</th><th>true y</th>
-                  <th>raw x</th><th>raw y</th>
+                  <th>raw x</th><th>raw y</th><th></th>
                 </tr>
               </thead>
               <tbody></tbody>

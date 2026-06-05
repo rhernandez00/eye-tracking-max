@@ -1,12 +1,12 @@
 // ---- Core domain types ----
 
-/** A stimulus presentation parsed from *_full_log.csv (type === "stim"). */
-export interface StimSegment {
+/** One row of *_full_log.csv, as a slice of the continuous acquisition timeline. */
+export interface TimelineEvent {
   index: number; // order within the session
-  id: string; // stimulus id == frame folder name, e.g. "R4DogF2"
+  type: string; // "stim" | "attractor" | "baseline" | …
+  id: string; // stim folder name, attractor id ("0".."8"), or baseline id
   onset: number; // seconds, same clock as raw eyetrack
-  endTime: number; // onset of next log event (or session end)
-  frameCount: number; // frames available on disk (-1 until enumerated)
+  end: number; // onset of the next event (or acquisition end)
 }
 
 /** Parsed raw eyetrack samples, columnar for fast lookup. */
@@ -17,14 +17,16 @@ export interface RawEyetrack {
   n: number;
 }
 
-/** One marker == one labelled frame. At most one per (stimId, frameIndex). */
+/** One marker == one labelled point on the global timeline (one per global frame). */
 export interface Marker {
-  stimId: string;
-  frameIndex: number;
-  frameTime: number; // onset + frameIndex/fps + delay, at capture time
+  globalFrame: number; // floor(displayTime * fps); unique key along the timeline
+  frameTime: number; // display time in seconds (= globalFrame / fps)
   fps: number;
   delayMs: number;
   isAnchor: boolean;
+  eventType: string; // what was on screen: stim | attractor | baseline
+  eventId: string; // stim folder / attractor id / baseline id
+  stimFrameIndex: number; // local frame within a stim clip, -1 for attractor/baseline
   rawPosX: number; // matched raw sample (tracker space)
   rawPosY: number;
   rawTimestamp: number;
@@ -45,3 +47,53 @@ export interface PreviewTransform {
 
 export const IMAGE_SIZE = 1080; // px (frames are 1080x1080)
 export const COORD_RANGE = 900; // saved coords span -900..+900, origin = image center
+
+// ---- Calibration ----
+
+/** FSL/MCFLIRT motion parameters, one row per fMRI volume. */
+export interface MotionData {
+  n: number; // number of volumes
+  m: Float64Array[]; // 6 motion params, each length n
+  fd: Uint8Array | null; // optional framewise-displacement flag (1 = flagged), length n
+}
+
+export type CalibKind = "affine" | "poly2" | "mocet" | "mocet_censored";
+
+/**
+ * A fitted gaze-calibration model. Pure data (no closures) so it can be cloned
+ * into IndexedDB. Evaluate with predictGaze() in calibrate.ts.
+ *
+ * Gaze map: trueX = gx·feat, trueY = gy·feat, where feat depends on `kind`.
+ * For MoCET, the raw signal is first de-drifted with driftX/driftY over the
+ * design [1, time-poly…, m1..m6] before the affine gaze map is applied.
+ */
+export interface CalibrationModel {
+  kind: CalibKind;
+  gx: number[]; // gaze-map coeffs for X
+  gy: number[]; // gaze-map coeffs for Y
+  driftX: number[]; // MoCET stage-1 drift coeffs for raw X (empty otherwise)
+  driftY: number[];
+  polyOrder: number; // MoCET time-polynomial order (0 for affine/poly2)
+  censor: boolean; // MoCET: FD-flagged volumes excluded from the drift fit
+  tr: number; // repetition time (s) used for the fit
+  tScale: number; // time normalisation used in the design (s)
+  nAnchors: number; // anchors used for the fit
+  rmseTrain: number; // 2-D RMSE on the training anchors (coord units)
+  rmseVal: number | null; // 2-D RMSE on non-anchor markers, if any
+  createdAt: string; // ISO
+  stale: boolean; // anchors/motion/TR changed since the fit
+}
+
+export const CALIB_KINDS: CalibKind[] = ["affine", "poly2", "mocet", "mocet_censored"];
+
+export const CALIB_META: Record<
+  CalibKind,
+  { label: string; color: string; minAnchors: number; needsMotion: boolean }
+> = {
+  affine: { label: "Affine", color: "#4aa3ff", minAnchors: 3, needsMotion: false },
+  poly2: { label: "Poly-2", color: "#c08bff", minAnchors: 6, needsMotion: false },
+  mocet: { label: "MoCET", color: "#ffb454", minAnchors: 3, needsMotion: true },
+  mocet_censored: { label: "MoCET (FD-censored)", color: "#38e08b", minAnchors: 3, needsMotion: true },
+};
+
+export const MOCET_POLY_ORDER = 3; // cubic time regressors (Park et al.)

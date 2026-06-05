@@ -23,6 +23,7 @@ const picker = (opts: { id?: string; mode?: "read" | "readwrite" }): Promise<Dir
 
 const KEY_STIMULI = "dir:stimuli";
 const KEY_SHARED = "dir:shared";
+const KEY_MOTION = "dir:motion";
 
 export async function pickStimuliDir(): Promise<DirHandle> {
   const h = await picker({ id: "stimuli", mode: "read" });
@@ -36,12 +37,20 @@ export async function pickSharedDir(): Promise<DirHandle> {
   return h;
 }
 
+/** Folder of FSL motion files (`<prefix>_fwd.txt`), auto-matched by session prefix. */
+export async function pickMotionDir(): Promise<DirHandle> {
+  const h = await picker({ id: "motion", mode: "read" });
+  await idbSet(KEY_MOTION, h);
+  return h;
+}
+
 async function restore(key: string): Promise<DirHandle | null> {
   return (await idbGet<DirHandle>(key)) ?? null;
 }
 
 export const restoreStimuliDir = () => restore(KEY_STIMULI);
 export const restoreSharedDir = () => restore(KEY_SHARED);
+export const restoreMotionDir = () => restore(KEY_MOTION);
 
 export async function ensurePermission(h: DirHandle, mode: "read" | "readwrite"): Promise<boolean> {
   if ((await h.queryPermission({ mode })) === "granted") return true;
@@ -100,10 +109,13 @@ export async function countFrames(stimuliDir: DirHandle, stimId: string): Promis
   return n;
 }
 
-/** Load one frame as a bitmap. */
-export async function loadFrame(stimuliDir: DirHandle, stimId: string, frameIndex: number): Promise<ImageBitmap> {
-  const folder = await stimuliDir.getDirectoryHandle(stimId);
-  const name = `frame_${String(frameIndex).padStart(4, "0")}.jpg`;
-  const fh = await folder.getFileHandle(name);
+/** Load an image (any file in a sub-folder of stimuli) as a bitmap. */
+export async function loadImageFile(
+  stimuliDir: DirHandle,
+  folderName: string,
+  fileName: string
+): Promise<ImageBitmap> {
+  const folder = await stimuliDir.getDirectoryHandle(folderName);
+  const fh = await folder.getFileHandle(fileName);
   return createImageBitmap(await fh.getFile());
 }
