@@ -124,18 +124,20 @@ The raw `pos_x/pos_y` are in tracker space, not the 1080² image. To *show* the 
 
 ## 6. Output file
 
-Written to `data/` as **`<session>_calibration_anchors.csv`** (mirrors the input naming so it sorts next to them). One row per anchor:
+Written to `shared_data/` as **`<session>_calibration_anchors.csv`** (mirrors the input naming so it sorts next to them). One row per anchor:
 
 ```
 global_frame, frame_time, fps, delay_ms, is_anchor,
+event_type, event_id, stim_frame_index,
 raw_pos_x, raw_pos_y, raw_timestamp,
 true_x, true_y,           # centered image coords (±900), where the user clicked
 created_at, note
 ```
 
-Which video/stimulus was on screen (`event_type`/`event_id`/`stim_frame_index`)
-is **not** written — it's irrelevant to the regression, which only needs the
-raw↔true pair and its timing. (The app still tracks it in-session for navigation.)
+`event_type`/`event_id`/`stim_frame_index` record what was on screen for the
+labelled frame. The regression itself only needs the raw↔true pair, but these
+columns are written for audit and to let work resume with full in-session
+navigation context.
 
 - `raw_pos_x/raw_pos_y` + `true_x/true_y` are the regression training pair.
 - `raw_timestamp` = actual timestamp of the matched sample (for audit vs `frame_time`).

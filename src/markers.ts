@@ -35,8 +35,9 @@ export class MarkerStore {
   }
 }
 
-// Which video/stimulus was on screen is not part of the output — only the
-// raw↔true calibration pair and its timing are written.
+// One row per labelled global frame: the raw↔true calibration pair and its
+// timing, plus what was on screen (event_type/event_id/stim_frame_index) for
+// audit and navigation. The regression itself only needs the raw↔true pair.
 const CSV_HEADER = [
   "global_frame",
   "frame_time",

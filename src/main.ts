@@ -37,8 +37,18 @@ import {
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const EYETRACK_SUFFIXES = ["_raw_eyetrack.csv", "_eyetrack_rough_calibration.csv", "_eyetracker.csv"];
-const EYETRACK_RE = /_(raw_eyetrack|eyetrack_rough_calibration|eyetracker)\.csv$/;
+// Newer exports prefix the eyetrack files with an extra `_eyetracker` segment
+// (e.g. `<session>_eyetracker_raw_eyetrack.csv`); older ones don't. Accept both
+// and derive the same session prefix either way. List the longer suffixes first
+// so loadSession() reconstructs the real filename; `_eyetracker.csv` is the bare
+// rough-calibration export some sessions ship instead.
+const EYETRACK_SUFFIXES = [
+  "_eyetracker_raw_eyetrack.csv",
+  "_raw_eyetrack.csv",
+  "_eyetrack_rough_calibration.csv",
+  "_eyetracker.csv",
+];
+const EYETRACK_RE = /(_eyetracker)?_(raw_eyetrack|eyetrack_rough_calibration)\.csv$|_eyetracker\.csv$/;
 const OTHERS_DIR = "others";
 const BASELINE_FILE = "baseline.png";
 
