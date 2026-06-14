@@ -18,7 +18,7 @@ import {
 import { parseRawEyetrack, nearestSample, parseTimeline, activeEventIndex } from "./csv";
 import { MarkerStore, markersToCsv, markersFromCsv } from "./markers";
 import { Renderer } from "./render";
-import { pixelToCoord, coordToPixel, rawToPixel, clampPixel } from "./coords";
+import { pixelToCoord, coordToPixel, rawToPixel, clampPixel, attractorCoord } from "./coords";
 import { idbGet, idbSet } from "./idb";
 import { parseMotion, fdCount } from "./motion";
 import { fitAffine, fitPoly2, fitMoCET, predictGaze, FitResult } from "./calibrate";
@@ -29,6 +29,7 @@ import {
   TimelineEvent,
   MotionData,
   CalibKind,
+  CalibSource,
   CalibrationModel,
   CALIB_KINDS,
   CALIB_META,
@@ -81,8 +82,13 @@ let delayStep = 10;
 let motion: MotionData | null = null;
 let motionName = "";
 let tr = 1.0;
+// Two parallel sets of fits: `models` is trained on the user's manual anchors
+// (the existing menu), `autoModels` on the automatically pre-selected anchors
+// (the baseline shown with an "Auto" prefix). Each kind has at most one of each.
 const models = new Map<CalibKind, CalibrationModel>();
+const autoModels = new Map<CalibKind, CalibrationModel>();
 const visible = new Set<CalibKind>();
+const visibleAuto = new Set<CalibKind>();
 
 let duration = 0; // acquisition length (s)
 let globalFrameCount = 0;
@@ -96,6 +102,17 @@ let playTimer: number | null = null;
 
 // ---------- helpers ----------
 const displayTime = (g: number): number => g / fps;
+
+/**
+ * Smallest global frame whose display time is at or after `onset`, so a jump
+ * lands on the frame where the event actually appears — never one before it.
+ * (Plain rounding can floor just below the onset and resolve to the prior event.)
+ */
+function frameForOnset(onset: number): number {
+  let g = Math.max(0, Math.ceil(onset * fps - 1e-6));
+  if (displayTime(g) < onset) g += 1; // guard against float landing just shy
+  return g;
+}
 
 function rawSampleAt(g: number): { x: number; y: number; t: number } | null {
   if (!raw || raw.n === 0) return null;
@@ -260,7 +277,9 @@ async function loadSession(): Promise<void> {
     tr = 1.0;
   }
   visible.clear();
+  visibleAuto.clear();
   for (const k of (cfg?.visible ?? []) as CalibKind[]) visible.add(k);
+  for (const k of (cfg?.visibleAuto ?? []) as CalibKind[]) visibleAuto.add(k);
   applyCfgToInputs();
   recomputeTimeline();
 
@@ -294,10 +313,15 @@ async function loadMarkers(prefix: string): Promise<void> {
 }
 
 function populateStimJump(): void {
-  const sel = $<HTMLSelectElement>("stim-select");
-  sel.innerHTML = '<option value="">— jump to stim —</option>';
+  fillJump("stim-select", "stim", "— jump to stim —");
+  fillJump("attractor-select", "attractor", "— jump to attractor —");
+}
+
+function fillJump(selId: string, type: string, placeholder: string): void {
+  const sel = $<HTMLSelectElement>(selId);
+  sel.innerHTML = `<option value="">${placeholder}</option>`;
   for (const ev of events) {
-    if (ev.type !== "stim") continue;
+    if (ev.type !== type) continue;
     const o = document.createElement("option");
     o.value = String(ev.index);
     o.textContent = `${ev.onset.toFixed(2)}s  ${ev.id}`;
@@ -356,11 +380,21 @@ function redraw(): void {
   const overlays: { x: number; y: number; color: string; label: string }[] = [];
   if (s) {
     for (const kind of CALIB_KINDS) {
-      if (!visible.has(kind)) continue;
-      const model = models.get(kind);
-      if (!model) continue;
-      const p = predictGaze(model, s.x, s.y, s.t, motion);
-      overlays.push({ x: p.x, y: p.y, color: CALIB_META[kind].color, label: CALIB_META[kind].label });
+      // Automatic baseline first (prefixed label), then the manual fit.
+      if (visibleAuto.has(kind)) {
+        const model = autoModels.get(kind);
+        if (model) {
+          const p = predictGaze(model, s.x, s.y, s.t, motion);
+          overlays.push({ x: p.x, y: p.y, color: CALIB_META[kind].color, label: labelFor(kind, "auto") });
+        }
+      }
+      if (visible.has(kind)) {
+        const model = models.get(kind);
+        if (model) {
+          const p = predictGaze(model, s.x, s.y, s.t, motion);
+          overlays.push({ x: p.x, y: p.y, color: CALIB_META[kind].color, label: labelFor(kind, "manual") });
+        }
+      }
     }
   }
   renderer.draw({
@@ -371,12 +405,31 @@ function redraw(): void {
     overlays,
   });
   updateMarkerInfo();
+  updateCoordStatus(s);
+}
+
+/** Show raw tracker x,y and the same point after the preview transform
+ * (corrections), as image pixels and as centered "true" coords. */
+function updateCoordStatus(s: { x: number; y: number; t: number } | null): void {
+  if (!s) {
+    $("cs-raw").textContent = "—";
+    $("cs-corr-px").textContent = "—";
+    $("cs-corr-coord").textContent = "—";
+    return;
+  }
+  const { px, py } = rawToPixel(s.x, s.y, pt);
+  const { x, y } = pixelToCoord(px, py);
+  $("cs-raw").textContent = `(${s.x.toFixed(1)}, ${s.y.toFixed(1)})`;
+  $("cs-corr-px").textContent = `(${px.toFixed(1)}, ${py.toFixed(1)})`;
+  $("cs-corr-coord").textContent = `(${x.toFixed(1)}, ${y.toFixed(1)})`;
 }
 
 function updateFrameInfo(): void {
   $("frame-info").textContent = `${globalFrameCount ? globalFrame + 1 : 0} / ${globalFrameCount}`;
   $("frame-time").textContent = `t=${displayTime(globalFrame).toFixed(3)}s`;
   $<HTMLInputElement>("timeline").value = String(globalFrame);
+
+  updateAttractorPad();
 
   const el = $("event-info");
   if (!current) {
@@ -391,6 +444,15 @@ function updateFrameInfo(): void {
     label = `attractor ${current.eventId}`;
   }
   el.innerHTML = `<span class="ev ${current.eventType}">${label}</span>`;
+}
+
+/** Highlight the attractor button matching the target currently on screen. */
+function updateAttractorPad(): void {
+  const activeId =
+    current && current.eventType === "attractor" ? parseInt(current.eventId, 10) : NaN;
+  $("attractor-pad")
+    .querySelectorAll<HTMLButtonElement>(".att-btn")
+    .forEach((b) => b.classList.toggle("active", parseInt(b.dataset.id!, 10) === activeId));
 }
 
 function updateMarkerInfo(): void {
@@ -410,15 +472,16 @@ function gotoFrame(g: number): void {
   highlightTableRow();
 }
 
-function stepStim(dir: number): void {
-  const stims = events.filter((e) => e.type === "stim");
-  if (!stims.length) return;
+function stepEvent(type: string, dir: number): void {
+  const list = events.filter((e) => e.type === type);
+  if (!list.length) return toast(`no ${type} events in this session`);
   const t = displayTime(globalFrame);
   const target =
     dir > 0
-      ? stims.find((s) => s.onset > t + 1e-4)
-      : [...stims].reverse().find((s) => s.onset < t - 1e-4);
-  if (target) gotoFrame(Math.round(target.onset * fps));
+      ? list.find((e) => e.onset > t + 1e-4)
+      : [...list].reverse().find((e) => e.onset < t - 1e-4);
+  if (target) gotoFrame(frameForOnset(target.onset));
+  else toast(dir > 0 ? `already at the last ${type}` : `already at the first ${type}`);
 }
 
 function play(): void {
@@ -439,7 +502,7 @@ function play(): void {
 }
 
 // ---------- markers ----------
-function makeMarker(trueX: number, trueY: number, isAnchor: boolean): Marker {
+function makeMarker(trueX: number, trueY: number, isAnchor: boolean, auto: boolean): Marker {
   const s = rawSampleAt(globalFrame);
   const r = current ?? resolve(globalFrame);
   return {
@@ -448,6 +511,7 @@ function makeMarker(trueX: number, trueY: number, isAnchor: boolean): Marker {
     fps,
     delayMs,
     isAnchor,
+    auto,
     eventType: r ? r.eventType : "",
     eventId: r ? r.eventId : "",
     stimFrameIndex: r ? r.stimFrameIndex : -1,
@@ -464,8 +528,19 @@ function makeMarker(trueX: number, trueY: number, isAnchor: boolean): Marker {
 function placeMarkerAtPixel(px: number, py: number): void {
   const { x, y } = pixelToCoord(clampPixel(px), clampPixel(py));
   const existing = store.get(globalFrame);
-  store.put(makeMarker(x, y, existing ? existing.isAnchor : false));
-  afterMarkerChange();
+  store.put(makeMarker(x, y, existing ? existing.isAnchor : false, existing ? existing.auto : false));
+  afterMarkerChange(existing?.auto ?? false);
+}
+
+/** Log a marker at the current frame using a known attractor's true coordinate,
+ * pairing it with the raw gaze sample here. Defaults to an anchor (ground truth). */
+function placeMarkerAtAttractor(id: number): void {
+  const s = rawSampleAt(globalFrame);
+  if (!s) return toast("no raw sample here");
+  const { x, y } = attractorCoord(id);
+  const existing = store.get(globalFrame);
+  store.put(makeMarker(x, y, existing ? existing.isAnchor : true, existing ? existing.auto : false));
+  afterMarkerChange(existing?.auto ?? false);
 }
 
 function addMarkerAtRaw(isAnchor: boolean): void {
@@ -473,8 +548,8 @@ function addMarkerAtRaw(isAnchor: boolean): void {
   if (!s) return toast("no raw sample here");
   const { px, py } = rawToPixel(s.x, s.y, pt);
   const { x, y } = pixelToCoord(clampPixel(px), clampPixel(py));
-  store.put(makeMarker(x, y, isAnchor));
-  afterMarkerChange();
+  store.put(makeMarker(x, y, isAnchor, false)); // user-created -> manual
+  afterMarkerChange(false);
 }
 
 function toggleFlag(): void {
@@ -482,11 +557,12 @@ function toggleFlag(): void {
   if (!m) return toast("no marker here");
   m.isAnchor = !m.isAnchor;
   store.put(m);
-  afterMarkerChange();
+  afterMarkerChange(m.auto);
 }
 
 function deleteMarker(): void {
-  if (store.delete(globalFrame)) afterMarkerChange();
+  const m = store.get(globalFrame);
+  if (m && store.delete(globalFrame)) afterMarkerChange(m.auto);
 }
 
 function nudge(dxPx: number, dyPx: number): void {
@@ -497,13 +573,15 @@ function nudge(dxPx: number, dyPx: number): void {
   m.trueX = x;
   m.trueY = y;
   store.put(m);
-  afterMarkerChange();
+  afterMarkerChange(m.auto);
 }
 
-function afterMarkerChange(): void {
+/** A marker edit invalidates only the fits trained on that marker's anchor set
+ * (auto vs manual), so refit hints stay accurate. */
+function afterMarkerChange(wasAuto: boolean): void {
   setDirty(true);
   autosave();
-  markModelsStale(CALIB_KINDS);
+  markModelsStale(CALIB_KINDS, wasAuto ? "auto" : "manual");
   redraw();
   renderTable();
 }
@@ -527,7 +605,7 @@ function renderTable(): void {
         : `${m.eventType} ${m.eventId}`;
     tr.innerHTML =
       `<td>${m.frameTime.toFixed(2)}</td><td>${ev}</td>` +
-      `<td><span class="tag ${m.isAnchor ? "anchor" : "normal"}">${m.isAnchor ? "anchor" : "normal"}</span></td>` +
+      `<td><span class="tag ${m.isAnchor ? "anchor" : "normal"}">${m.isAnchor ? "anchor" : "normal"}${m.auto ? " ·auto" : ""}</span></td>` +
       `<td>${m.trueX.toFixed(0)}</td><td>${m.trueY.toFixed(0)}</td>` +
       `<td>${isNaN(m.rawPosX) ? "–" : m.rawPosX.toFixed(0)}</td>` +
       `<td>${isNaN(m.rawPosY) ? "–" : m.rawPosY.toFixed(0)}</td>` +
@@ -535,7 +613,7 @@ function renderTable(): void {
     tr.addEventListener("click", () => gotoFrame(m.globalFrame));
     tr.querySelector(".row-del")!.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (store.delete(m.globalFrame)) afterMarkerChange();
+      if (store.delete(m.globalFrame)) afterMarkerChange(m.auto);
     });
     tbody.appendChild(tr);
   }
@@ -564,15 +642,31 @@ function applyCfgToInputs(): void {
 }
 
 function saveCfg(): void {
-  if (sessionPrefix) idbSet(`cfg:${sessionPrefix}`, { fps, delayMs, pt, tr, visible: [...visible] });
+  if (sessionPrefix)
+    idbSet(`cfg:${sessionPrefix}`, {
+      fps,
+      delayMs,
+      pt,
+      tr,
+      visible: [...visible],
+      visibleAuto: [...visibleAuto],
+    });
 }
 
 function wireControls(): void {
-  $<HTMLSelectElement>("stim-select").addEventListener("change", (e) => {
-    const v = (e.target as HTMLSelectElement).value;
-    if (v === "") return;
-    const ev = events[+v];
-    if (ev) gotoFrame(Math.round(ev.onset * fps));
+  for (const selId of ["stim-select", "attractor-select"]) {
+    $<HTMLSelectElement>(selId).addEventListener("change", (e) => {
+      const v = (e.target as HTMLSelectElement).value;
+      if (v === "") return;
+      const ev = events[+v];
+      if (ev) gotoFrame(frameForOnset(ev.onset));
+    });
+  }
+
+  $("show-shortcuts").addEventListener("click", () => toggleShortcuts(true));
+  $("close-shortcuts").addEventListener("click", () => toggleShortcuts(false));
+  $("shortcuts-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) toggleShortcuts(false);
   });
 
   $("first").addEventListener("click", () => gotoFrame(0));
@@ -620,6 +714,10 @@ function wireControls(): void {
     });
   }
 
+  $("attractor-pad")
+    .querySelectorAll<HTMLButtonElement>(".att-btn")
+    .forEach((b) => b.addEventListener("click", () => placeMarkerAtAttractor(parseInt(b.dataset.id!, 10))));
+
   $("btn-add-normal").addEventListener("click", () => addMarkerAtRaw(false));
   $("btn-add-anchor").addEventListener("click", () => addMarkerAtRaw(true));
   $("btn-toggle").addEventListener("click", toggleFlag);
@@ -636,10 +734,12 @@ function wireControls(): void {
   $<HTMLInputElement>("tr-input").addEventListener("change", (e) => {
     tr = Math.max(0.01, parseFloat((e.target as HTMLInputElement).value) || 1);
     saveCfg();
-    markModelsStale(["mocet", "mocet_censored"]);
+    markModelsStale(["mocet", "mocet_censored"], "manual");
+    markModelsStale(["mocet", "mocet_censored"], "auto");
     redraw();
   });
-  $("calib-run-all").addEventListener("click", () => CALIB_KINDS.forEach((k) => runCalib(k, true)));
+  // "Run all" drives the manual menu only; the auto baseline refits from its own group.
+  $("calib-run-all").addEventListener("click", () => CALIB_KINDS.forEach((k) => runCalib(k, "manual", true)));
 }
 
 // ---------- calibration ----------
@@ -649,7 +749,8 @@ async function onMotionFile(e: Event): Promise<void> {
   motion = parseMotion(await f.text());
   motionName = f.name;
   if (sessionPrefix) idbSet(`motion:${sessionPrefix}`, { name: motionName, data: motion });
-  markModelsStale(["mocet", "mocet_censored"]);
+  markModelsStale(["mocet", "mocet_censored"], "manual");
+  markModelsStale(["mocet", "mocet_censored"], "auto");
   updateMotionInfo();
   renderCalibList();
   redraw();
@@ -666,42 +767,81 @@ function updateMotionInfo(): void {
   el.textContent = `${motionName} · ${motion.n} vols${fd}`;
 }
 
-function runCalib(kind: CalibKind, quiet = false): void {
-  const anchors = store.all().filter((m) => m.isAnchor);
-  const val = store.all().filter((m) => !m.isAnchor);
-  let res: FitResult;
-  if (kind === "affine") res = fitAffine(anchors, val);
-  else if (kind === "poly2") res = fitPoly2(anchors, val);
-  else {
-    if (!motion) return quiet ? undefined : void toast("upload a motion file first");
-    if (!raw) return;
-    res = fitMoCET({
-      raw,
-      motion,
-      tr,
-      polyOrder: MOCET_POLY_ORDER,
-      censor: kind === "mocet_censored",
-      anchors,
-      valMarkers: val,
-    });
-  }
+/** Overlay/menu label for a fit, prefixed when it comes from the auto baseline. */
+function labelFor(kind: CalibKind, source: CalibSource): string {
+  return (source === "auto" ? "Auto " : "") + CALIB_META[kind].label;
+}
+
+const modelsFor = (source: CalibSource) => (source === "auto" ? autoModels : models);
+const visibleFor = (source: CalibSource) => (source === "auto" ? visibleAuto : visible);
+
+/** Anchors (training) and non-anchor validation markers belonging to one source. */
+function anchorSet(source: CalibSource): { anchors: Marker[]; val: Marker[] } {
+  const all = store.all();
+  const ofSource = (m: Marker) => (source === "auto" ? m.auto : !m.auto);
+  return {
+    anchors: all.filter((m) => m.isAnchor && ofSource(m)),
+    val: all.filter((m) => !m.isAnchor && ofSource(m)),
+  };
+}
+
+/** Pure fit — no side effects. Returns the model or an {error}. */
+function fitModel(kind: CalibKind, anchors: Marker[], val: Marker[]): FitResult {
+  if (kind === "affine") return fitAffine(anchors, val);
+  if (kind === "poly2") return fitPoly2(anchors, val);
+  if (!motion) return { error: "upload a motion file first" };
+  if (!raw) return { error: "no eyetrack data" };
+  return fitMoCET({
+    raw,
+    motion,
+    tr,
+    polyOrder: MOCET_POLY_ORDER,
+    censor: kind === "mocet_censored",
+    anchors,
+    valMarkers: val,
+  });
+}
+
+function runCalib(kind: CalibKind, source: CalibSource = "manual", quiet = false): void {
+  const { anchors, val } = anchorSet(source);
+  const res = fitModel(kind, anchors, val);
   if ("error" in res) {
     if (!quiet) toast(res.error);
     return;
   }
-  models.set(kind, res);
-  visible.add(kind);
+  modelsFor(source).set(kind, res);
+  visibleFor(source).add(kind);
   persistModels();
   saveCfg();
   renderCalibList();
   redraw();
-  if (!quiet) toast(`${CALIB_META[kind].label}: RMSE ${res.rmseTrain.toFixed(0)} (n=${res.nAnchors})`);
+  if (!quiet) toast(`${labelFor(kind, source)}: RMSE ${res.rmseTrain.toFixed(0)} (n=${res.nAnchors})`);
 }
 
-function markModelsStale(kinds: CalibKind[]): void {
+/** Fit the automatic baseline for every method that has enough auto anchors.
+ * Quiet and batched: persists/redraws once. Gives each acquisition a starting
+ * calibration the user can then refine with manual anchors. */
+function autoFitAll(): void {
+  const { anchors, val } = anchorSet("auto");
+  let any = false;
+  for (const kind of CALIB_KINDS) {
+    const res = fitModel(kind, anchors, val);
+    if ("error" in res) continue;
+    autoModels.set(kind, res);
+    visibleAuto.add(kind);
+    any = true;
+  }
+  if (any) {
+    persistModels();
+    saveCfg();
+  }
+}
+
+function markModelsStale(kinds: CalibKind[], source: CalibSource): void {
+  const map = modelsFor(source);
   let changed = false;
   for (const k of kinds) {
-    const m = models.get(k);
+    const m = map.get(k);
     if (m && !m.stale) {
       m.stale = true;
       changed = true;
@@ -714,11 +854,14 @@ function markModelsStale(kinds: CalibKind[]): void {
 }
 
 function persistModels(): void {
-  if (sessionPrefix) idbSet(`calib:${sessionPrefix}`, [...models.values()]);
+  if (!sessionPrefix) return;
+  idbSet(`calib:${sessionPrefix}`, [...models.values()]);
+  idbSet(`calibAuto:${sessionPrefix}`, [...autoModels.values()]);
 }
 
 async function loadCalibration(prefix: string): Promise<void> {
   models.clear();
+  autoModels.clear();
   motion = null;
   motionName = "";
   // A manually-uploaded motion file (cached) overrides the auto-match.
@@ -731,6 +874,11 @@ async function loadCalibration(prefix: string): Promise<void> {
   }
   const saved = (await idbGet<CalibrationModel[]>(`calib:${prefix}`)) ?? [];
   for (const m of saved) models.set(m.kind, m);
+  const savedAuto = (await idbGet<CalibrationModel[]>(`calibAuto:${prefix}`)) ?? [];
+  for (const m of savedAuto) autoModels.set(m.kind, m);
+  // First time we see this session: derive the automatic baseline from its
+  // pre-selected anchors so there's always something to refine.
+  if (!autoModels.size) autoFitAll();
   updateMotionInfo();
   renderCalibList();
 }
@@ -755,26 +903,42 @@ function calibStatusText(kind: CalibKind, model: CalibrationModel | undefined): 
 function renderCalibList(): void {
   const host = $("calib-list");
   host.innerHTML = "";
+  host.appendChild(calibGroup("auto", "Automatic (baseline)"));
+  host.appendChild(calibGroup("manual", "Manual (your anchors)"));
+}
+
+/** One titled block of method rows for either the auto or the manual anchor set. */
+function calibGroup(source: CalibSource, title: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "calib-group";
+  const head = document.createElement("div");
+  head.className = "calib-group-title";
+  head.textContent = title;
+  wrap.appendChild(head);
+
+  const map = modelsFor(source);
+  const vis = visibleFor(source);
   for (const kind of CALIB_KINDS) {
     const meta = CALIB_META[kind];
-    const model = models.get(kind);
+    const model = map.get(kind);
     const row = document.createElement("div");
     row.className = "calib-row";
     row.innerHTML =
-      `<label class="calib-show"><input type="checkbox" ${visible.has(kind) ? "checked" : ""} ${
+      `<label class="calib-show"><input type="checkbox" ${vis.has(kind) ? "checked" : ""} ${
         model ? "" : "disabled"
-      } /><span class="swatch" style="background:${meta.color}"></span>${meta.label}</label>` +
+      } /><span class="swatch" style="background:${meta.color}"></span>${labelFor(kind, source)}</label>` +
       `<span class="calib-status">${calibStatusText(kind, model)}</span>` +
       `<button class="btn sm calib-run">${model ? "Refit" : "Run"}</button>`;
     row.querySelector<HTMLInputElement>("input")!.addEventListener("change", (e) => {
-      if ((e.target as HTMLInputElement).checked) visible.add(kind);
-      else visible.delete(kind);
+      if ((e.target as HTMLInputElement).checked) vis.add(kind);
+      else vis.delete(kind);
       saveCfg();
       redraw();
     });
-    row.querySelector(".calib-run")!.addEventListener("click", () => runCalib(kind));
-    host.appendChild(row);
+    row.querySelector(".calib-run")!.addEventListener("click", () => runCalib(kind, source));
+    wrap.appendChild(row);
   }
+  return wrap;
 }
 
 function changeDelay(d: number): void {
@@ -820,10 +984,16 @@ function wireShortcuts(): void {
         }
         break;
       case "[":
-        stepStim(-1);
+        stepEvent("stim", -1);
         break;
       case "]":
-        stepStim(1);
+        stepEvent("stim", 1);
+        break;
+      case "{":
+        stepEvent("attractor", -1);
+        break;
+      case "}":
+        stepEvent("attractor", 1);
         break;
       case " ":
         e.preventDefault();
@@ -856,8 +1026,21 @@ function wireShortcuts(): void {
       case ".":
         changeDelay(delayStep);
         break;
+      case "?":
+        e.preventDefault();
+        toggleShortcuts();
+        break;
+      case "Escape":
+        toggleShortcuts(false);
+        break;
     }
   });
+}
+
+function toggleShortcuts(force?: boolean): void {
+  const el = $("shortcuts-overlay");
+  const show = force ?? el.classList.contains("hidden");
+  el.classList.toggle("hidden", !show);
 }
 
 // ---------- save ----------

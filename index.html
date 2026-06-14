@@ -29,11 +29,21 @@
             <label>Jump to stim
               <select id="stim-select" class="select"></select>
             </label>
+            <label>Jump to attractor
+              <select id="attractor-select" class="select"></select>
+            </label>
             <span id="event-info" class="event-info"></span>
+            <button id="show-shortcuts" class="btn sm" title="Keyboard shortcuts (?)">⌨ shortcuts</button>
           </div>
 
           <div id="canvas-wrap">
             <canvas id="frame-canvas" width="720" height="720"></canvas>
+          </div>
+
+          <div id="coord-status" class="coord-status">
+            <span class="cs-item"><span class="cs-label">raw</span> <span id="cs-raw" class="cs-val">—</span></span>
+            <span class="cs-item"><span class="cs-label">corrected px</span> <span id="cs-corr-px" class="cs-val">—</span></span>
+            <span class="cs-item"><span class="cs-label">corrected coord</span> <span id="cs-corr-coord" class="cs-val">—</span></span>
           </div>
 
           <input id="timeline" class="timeline" type="range" min="0" max="0" value="0" step="1" />
@@ -103,6 +113,21 @@
             <button id="btn-del" class="btn danger" title="Delete current marker (Del)">🗑</button>
           </div>
 
+          <div class="attractor-pad" id="attractor-pad">
+            <div class="attractor-pad-label muted small">Attractor position — log the current frame at a known target</div>
+            <div class="attractor-grid">
+              <button class="att-btn" data-id="0" title="Top-left">↖</button>
+              <button class="att-btn" data-id="1" title="Top">↑</button>
+              <button class="att-btn" data-id="2" title="Top-right">↗</button>
+              <button class="att-btn" data-id="3" title="Left">←</button>
+              <button class="att-btn" data-id="4" title="Center">●</button>
+              <button class="att-btn" data-id="5" title="Right">→</button>
+              <button class="att-btn" data-id="6" title="Bottom-left">↙</button>
+              <button class="att-btn" data-id="7" title="Bottom">↓</button>
+              <button class="att-btn" data-id="8" title="Bottom-right">↘</button>
+            </div>
+          </div>
+
           <div class="marker-current" id="marker-current"></div>
 
           <div class="table-wrap">
@@ -124,6 +149,34 @@
           </div>
         </aside>
       </main>
+
+      <!-- ===== Keyboard shortcuts overlay ===== -->
+      <div id="shortcuts-overlay" class="overlay hidden">
+        <div class="overlay-card">
+          <div class="overlay-head">
+            <h2>Keyboard shortcuts</h2>
+            <button id="close-shortcuts" class="btn sm" title="Close (Esc / ?)">✕</button>
+          </div>
+          <table class="shortcuts">
+            <tbody>
+              <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Previous / next frame</td></tr>
+              <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>Jump ∓10 frames</td></tr>
+              <tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>First / last frame</td></tr>
+              <tr><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
+              <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Previous / next stim</td></tr>
+              <tr><td><kbd>{</kbd> / <kbd>}</kbd></td><td>Previous / next attractor (<kbd>Shift</kbd>+<kbd>[</kbd> / <kbd>]</kbd>)</td></tr>
+              <tr><td><kbd>a</kbd></td><td>Add normal marker at raw position</td></tr>
+              <tr><td><kbd>Shift</kbd>+<kbd>a</kbd></td><td>Add anchor at raw position</td></tr>
+              <tr><td><kbd>t</kbd></td><td>Toggle anchor flag on current marker</td></tr>
+              <tr><td><kbd>Del</kbd> / <kbd>Backspace</kbd></td><td>Delete current marker</td></tr>
+              <tr><td><kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd></td><td>Nudge marker 1px (<kbd>Shift</kbd> = 10px)</td></tr>
+              <tr><td><kbd>,</kbd> / <kbd>.</kbd></td><td>Decrease / increase delay</td></tr>
+              <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Save CSV</td></tr>
+              <tr><td><kbd>?</kbd></td><td>Show / hide this list</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div id="toast" class="toast hidden"></div>
     </div>

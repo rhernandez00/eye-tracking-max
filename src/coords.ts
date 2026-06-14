@@ -1,4 +1,4 @@
-import { IMAGE_SIZE, COORD_RANGE, PreviewTransform } from "./types";
+import { IMAGE_SIZE, COORD_RANGE, ATTRACTOR_EXTENT, PreviewTransform } from "./types";
 
 // ===== Saved "true" coordinate space =====
 // Origin is the CENTER of the image; the image spans -COORD_RANGE..+COORD_RANGE
@@ -33,4 +33,16 @@ export function rawToPixel(rawX: number, rawY: number, pt: PreviewTransform): { 
 
 export function clampPixel(v: number): number {
   return Math.max(0, Math.min(IMAGE_SIZE, v));
+}
+
+/**
+ * Attractor id (0..8, 3x3 grid row-major from top-left, centre = 4) -> centered
+ * "true" coord. Targets sit on a ±ATTRACTOR_EXTENT px ring from screen centre,
+ * +X right / +Y up in the experiment's window space; route through the same
+ * pixel→coord mapping as everything else so Y_DOWN stays the single source of truth.
+ */
+export function attractorCoord(id: number): { x: number; y: number } {
+  const wx = ((id % 3) - 1) * ATTRACTOR_EXTENT; // +right
+  const wy = (1 - Math.floor(id / 3)) * ATTRACTOR_EXTENT; // +up
+  return pixelToCoord(IMAGE_SIZE / 2 + wx, IMAGE_SIZE / 2 - wy);
 }

@@ -24,6 +24,7 @@ export interface Marker {
   fps: number;
   delayMs: number;
   isAnchor: boolean;
+  auto: boolean; // true = automatically pre-selected; the manual fits ignore these
   eventType: string; // what was on screen: stim | attractor | baseline
   eventId: string; // stim folder / attractor id / baseline id
   stimFrameIndex: number; // local frame within a stim clip, -1 for attractor/baseline
@@ -47,6 +48,7 @@ export interface PreviewTransform {
 
 export const IMAGE_SIZE = 1080; // px (frames are 1080x1080)
 export const COORD_RANGE = 900; // saved coords span -900..+900, origin = image center
+export const ATTRACTOR_EXTENT = 400; // attractor offset from centre, in screen px (EmoC 3x3 grid)
 
 // ---- Calibration ----
 
@@ -58,6 +60,9 @@ export interface MotionData {
 }
 
 export type CalibKind = "affine" | "poly2" | "mocet" | "mocet_censored";
+
+/** Which anchor set a fit was trained on: the automatic baseline or the user's manual picks. */
+export type CalibSource = "auto" | "manual";
 
 /**
  * A fitted gaze-calibration model. Pure data (no closures) so it can be cloned

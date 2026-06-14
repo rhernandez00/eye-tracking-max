@@ -74,6 +74,18 @@ label { display: inline-flex; align-items: center; gap: 6px; }
   background: #000;
 }
 
+/* ---- coord status bar ---- */
+.coord-status {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel-2); font-variant-numeric: tabular-nums;
+}
+.coord-status .cs-item { display: inline-flex; align-items: baseline; gap: 6px; }
+.coord-status .cs-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.coord-status .cs-val { font-weight: 600; }
+#cs-raw { color: var(--raw); }
+#cs-corr-px, #cs-corr-coord { color: var(--accent); }
+
 .timeline { width: 100%; accent-color: var(--accent); cursor: pointer; }
 .event-info { font-variant-numeric: tabular-nums; }
 .event-info .ev { padding: 1px 7px; border-radius: 4px; margin-left: 8px; }
@@ -91,7 +103,9 @@ label { display: inline-flex; align-items: center; gap: 6px; }
 .calib summary { cursor: pointer; color: var(--muted); }
 .calib-motion { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
 .file-btn { cursor: pointer; }
-.calib-list { display: flex; flex-direction: column; gap: 4px; }
+.calib-list { display: flex; flex-direction: column; gap: 10px; }
+.calib-group { display: flex; flex-direction: column; gap: 4px; }
+.calib-group-title { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .calib-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 3px 0; }
 .calib-show { gap: 6px; min-width: 0; }
 .calib-show input:disabled + .swatch { opacity: .4; }
@@ -113,6 +127,22 @@ label { display: inline-flex; align-items: center; gap: 6px; }
 .marker-actions { display: flex; gap: 6px; padding: 0 12px 8px; flex-wrap: wrap; }
 .marker-current { padding: 0 12px 8px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 18px; }
 
+/* ---- attractor position pad ---- */
+.attractor-pad { padding: 0 12px 8px; }
+.attractor-pad-label { margin-bottom: 4px; }
+.attractor-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; max-width: 168px; }
+.att-btn {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; font-size: 16px; line-height: 1;
+}
+.att-btn:hover { border-color: var(--accent); }
+.att-btn.active {
+  border-color: var(--anchor); color: var(--anchor);
+  box-shadow: 0 0 0 1px var(--anchor) inset;
+}
+
 .table-wrap { flex: 1; overflow: auto; border-top: 1px solid var(--line); }
 #marker-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 #marker-table th, #marker-table td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -128,6 +158,31 @@ label { display: inline-flex; align-items: center; gap: 6px; }
 .row-del:hover { color: var(--danger); }
 
 .side-foot { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+
+.stage-head { flex-wrap: wrap; }
+#show-shortcuts { margin-left: auto; }
+
+/* ---- keyboard shortcuts overlay ---- */
+.overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.overlay-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 18px; max-width: 560px; width: calc(100% - 40px);
+  max-height: 80vh; overflow: auto; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.overlay-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.overlay-head h2 { font-size: 15px; margin: 0; }
+table.shortcuts { width: 100%; border-collapse: collapse; }
+table.shortcuts td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.shortcuts td:first-child { white-space: nowrap; width: 1%; }
+kbd {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-bottom-width: 2px; font: 11px/1.4 ui-monospace, "Cascadia Code", monospace;
+}
 
 /* ---- toast ---- */
 .toast {
